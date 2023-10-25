@@ -15,8 +15,8 @@ from adk.api.local_api import LocalApi
 from adk.api.remote_api import RemoteApi
 from adk.command_processor import CommandProcessor
 from adk.decorators import catch_qne_adk_exceptions
-from adk.exceptions import (ApplicationAlreadyExists, ApplicationNotFound, ExperimentDirectoryNotValid,
-                            NotEnoughRoles, RolesNotUnique)
+from adk.exceptions import (ApplicationAlreadyExists, ApplicationNotFound, ApplicationFailedValidation,
+    ExperimentDirectoryNotValid, ExperimentFailedValidation, ExperimentExecutionError, RolesNotUnique)
 from adk.managers.config_manager import ConfigManager
 from adk.settings import Settings
 from adk.type_aliases import ErrorDictType
@@ -90,14 +90,18 @@ def retrieve_application_name_and_path(application_name: Optional[str]) -> Tuple
     return application_path, application_name
 
 
-def show_validation_messages(validation_dict: ErrorDictType) -> None:
+def format_validation_messages(validation_dict: ErrorDictType) -> str:
     """
-    Show the error, warnings and info messages collected during validation.
+    Format the error, warnings and info messages collected during validation for printing to the terminal.
     """
+    message = ""
     for key in validation_dict:
         if validation_dict[key]:
             for item in validation_dict[key]:
-                typer.echo(f"{key.upper()}: {item}")
+                if message:
+                    message += "\n"
+                message += f"{key.capitalize()}: {item}"
+    return message
 
 
 @applications_app.command("init")
@@ -138,9 +142,6 @@ def applications_create(
     For example: qne application create application_name Alice Bob
     """
 
-    # Check roles
-    if len(roles) <= 1:
-        raise NotEnoughRoles()
     # Lower case roles for testing for the same role
     lower_case_roles = [role.lower() for role in roles]
     if not all(lower_case_roles.count(role) == 1 for role in lower_case_roles):
@@ -227,9 +228,9 @@ def applications_clone(
         validate_dict = processor.applications_validate(application_name=application_name,
                                                         application_path=application_path)
         if validate_dict["error"] or validate_dict["warning"]:
-            show_validation_messages(validate_dict)
-            typer.echo(f"Local application '{application_name}' is invalid. Application not cloned")
-            return
+            typer.echo("Local application was not cloned")
+            validation_messages = format_validation_messages(validate_dict)
+            raise ApplicationFailedValidation(application_name, validation_messages)
 
     processor.applications_clone(application_name=application_name,
                                  local=local,
@@ -281,16 +282,18 @@ def applications_upload(
     application_path, application_name = retrieve_application_name_and_path(application_name=application_name)
     validate_dict = processor.applications_validate(application_name=application_name,
                                                     application_path=application_path)
+    validation_messages = format_validation_messages(validate_dict)
+
     if validate_dict["error"] or validate_dict["warning"]:
-        show_validation_messages(validate_dict)
-        typer.echo(f"Application '{application_name}' is invalid. Application not uploaded")
+        typer.echo("Application was not uploaded")
+        raise ApplicationFailedValidation(application_name, validation_messages)
+
+    uploaded_success = processor.applications_upload(application_name=application_name,
+                                                     application_path=application_path)
+    if uploaded_success:
+        typer.echo(f"Application '{application_name}' uploaded successfully")
     else:
-        uploaded_success = processor.applications_upload(application_name=application_name,
-                                                         application_path=application_path)
-        if uploaded_success:
-            typer.echo(f"Application '{application_name}' uploaded successfully")
-        else:
-            typer.echo(f"Application '{application_name}' not uploaded")
+        typer.echo(f"Application '{application_name}' not uploaded")
 
 
 @applications_app.command("publish")
@@ -309,15 +312,17 @@ def applications_publish(
     application_path, application_name = retrieve_application_name_and_path(application_name=application_name)
     validate_dict = processor.applications_validate(application_name=application_name,
                                                     application_path=application_path)
+    validation_messages = format_validation_messages(validate_dict)
+
     if validate_dict["error"] or validate_dict["warning"]:
-        show_validation_messages(validate_dict)
-        typer.echo(f"Application '{application_name}' is invalid. Application not published")
+        typer.echo("Application was not published")
+        raise ApplicationFailedValidation(application_name, validation_messages)
+
+    publish_success = processor.applications_publish(application_path=application_path)
+    if publish_success:
+        typer.echo(f"Application '{application_name}' published successfully")
     else:
-        publish_success = processor.applications_publish(application_path=application_path)
-        if publish_success:
-            typer.echo(f"Application '{application_name}' published successfully")
-        else:
-            typer.echo(f"Application '{application_name}' not published")
+        typer.echo(f"Application '{application_name}' not published")
 
 
 @applications_app.command("list")
@@ -379,15 +384,16 @@ def applications_validate(
     """
     application_path, application_name = retrieve_application_name_and_path(application_name=application_name)
 
-    typer.echo(f"Validate application '{application_name}'")
-    error_dict = processor.applications_validate(application_name=application_name, application_path=application_path)
+    validate_dict = processor.applications_validate(application_name=application_name,
+                                                    application_path=application_path)
+    validation_messages = format_validation_messages(validate_dict)
 
-    show_validation_messages(error_dict)
+    if validate_dict["error"] or validate_dict["warning"]:
+        raise ApplicationFailedValidation(application_name, validation_messages)
 
-    if error_dict["error"] or error_dict["warning"]:
-        typer.echo(f"Application '{application_name}' is invalid")
-    else:
-        typer.echo(f"Application '{application_name}' is valid")
+    typer.echo(f"Application '{application_name}' is valid")
+    if validation_messages:
+        typer.echo(f"{validation_messages}")
 
 
 @experiments_app.command("create")
@@ -414,12 +420,13 @@ def experiments_create(
     validate_dict = processor.applications_validate(application_name=application_name,
                                                     application_path=application_path, local=local)
     if validate_dict["error"] or validate_dict["warning"]:
-        show_validation_messages(validate_dict)
-        typer.echo(f"Application '{application_name}' is invalid. Experiment not created.")
-    else:
-        processor.experiments_create(experiment_name=experiment_name, application_name=application_name,
-                                     network_name=network_name, local=local, path=cwd)
-        typer.echo(f"Experiment '{experiment_name}' created successfully in directory '{cwd}'")
+        typer.echo("Experiment was not created")
+        validation_messages = format_validation_messages(validate_dict)
+        raise ExperimentFailedValidation(validation_messages)
+
+    processor.experiments_create(experiment_name=experiment_name, application_name=application_name,
+                                 network_name=network_name, local=local, path=cwd)
+    typer.echo(f"Experiment '{experiment_name}' created successfully in directory '{cwd}'")
 
 
 @experiments_app.command("list")
@@ -510,6 +517,7 @@ def experiments_delete(
 def experiments_run(
     experiment_name: Optional[str] = typer.Argument(None, help="Name of the experiment"),
     block: bool = typer.Option(False, "--block", help="Wait for the (remote) experiment to finish"),
+    update: bool = typer.Option(False, "--update", help="Update the application files"),
     timeout: Optional[int] = typer.Option(None, "--timeout", help="Limit the wait for the experiment to finish")
 ) -> None:
     """
@@ -519,6 +527,7 @@ def experiments_run(
     given, the current directory is taken as experiment directory.
     Block (remote experiment runs only) waits for the experiment to finish before returning (and results are available).
     Local experiment runs are blocked by default.
+    Update (local experiment runs only) updates the application files for the experiment first.
     Timeout (optional) limits the wait (in seconds) for a blocked experiment to finish. In case of a local experiment,
     a timeout will cancel the experiment run. A remote experiment run is not canceled after a timeout and results can be
     fetched at a later moment.
@@ -528,24 +537,42 @@ def experiments_run(
     validate_dict = processor.experiments_validate(experiment_path=experiment_path)
 
     if validate_dict["error"] or validate_dict["warning"]:
-        show_validation_messages(validate_dict)
-        typer.echo("Experiment is invalid. Please resolve the issues and then run the experiment.")
-    else:
-        local = local_api.is_experiment_local(experiment_path=experiment_path)
+        typer.echo("Experiment did not run")
+        validation_messages = format_validation_messages(validate_dict)
+        raise ExperimentFailedValidation(validation_messages)
+
+    local = local_api.is_experiment_local(experiment_path=experiment_path)
+    if local:
+        block = True
+    if update:
         if local:
-            block = True
-        if block:
-            typer.echo(f"Experiment is sent to the {'local' if local else 'remote'} server. "
-                       f"Please wait until the results are received...")
-        results = processor.experiments_run(experiment_path=experiment_path, block=block, timeout=timeout)
-        if results is not None:
-            if results and "error" in results[0]["round_result"]:
-                typer.echo("Error encountered while running the experiment")
-                typer.echo(results[0]["round_result"]["error"])
-            else:
-                typer.echo("Experiment run successfully. Check the results using command 'experiment results'")
+            # When updating the application files in the experiment, first validate the app again
+            application_name = local_api.get_experiment_application(experiment_path)
+            application_path, application_name = retrieve_application_name_and_path(
+                application_name=application_name)
+
+            validate_dict = processor.applications_validate(application_name=application_name,
+                                                            application_path=application_path, local=local)
+            if validate_dict["error"] or validate_dict["warning"]:
+                typer.echo("Experiment cannot be updated")
+                validation_messages = format_validation_messages(validate_dict)
+                raise ApplicationFailedValidation(application_name, validation_messages)
         else:
-            typer.echo("Experiment sent successfully to server. Check the results using command 'experiment results'")
+            typer.echo("Update only valid for local experiment runs")
+            return
+
+    if block:
+        typer.echo(f"Experiment is sent to the {'local' if local else 'remote'} server. "
+                   f"Please wait until the results are received...")
+    results = processor.experiments_run(experiment_path=experiment_path, block=block, update=update,
+                                        timeout=timeout)
+    if results is not None:
+        if results and "error" in results[0]["round_result"]:
+            raise ExperimentExecutionError(results[0]["round_result"]["error"])
+
+        typer.echo("Experiment run successfully. Check the results using command 'experiment results'")
+    else:
+        typer.echo("Experiment sent successfully to server. Check the results using command 'experiment results'")
 
 
 @experiments_app.command("validate")
@@ -560,15 +587,16 @@ def experiments_validate(
     given, the current directory is taken as experiment directory.
     """
     experiment_path, experiment_name = retrieve_experiment_name_and_path(experiment_name=experiment_name)
-    typer.echo(f"Validate experiment '{experiment_name}'\n")
 
-    error_dict = processor.experiments_validate(experiment_path=experiment_path)
-    show_validation_messages(error_dict)
+    validate_dict = processor.experiments_validate(experiment_path=experiment_path)
+    validation_messages = format_validation_messages(validate_dict)
 
-    if error_dict["error"] or error_dict["warning"]:
-        typer.echo("Experiment is invalid")
-    else:
-        typer.echo("Experiment is valid")
+    if validate_dict["error"] or validate_dict["warning"]:
+        raise ExperimentFailedValidation(validation_messages)
+
+    typer.echo("Experiment is valid")
+    if validation_messages:
+        typer.echo(f"{validation_messages}")
 
 
 @experiments_app.command("results")

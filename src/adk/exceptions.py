@@ -62,6 +62,14 @@ class ApplicationValueError(QneAdkException):
         super().__init__(f"{message}")
 
 
+class ApplicationFailedValidation(QneAdkException):
+    """Raised when an application fails validation"""
+
+    def __init__(self, application_name: str, validation_messages: str) -> None:
+        super().__init__(f"Application '{application_name}' failed validation. Please resolve the following issues:\n"
+                         f"{validation_messages}")
+
+
 class AuthenticationError(QneAdkException):
     """Raised when authentication failed"""
 
@@ -132,6 +140,21 @@ class ExperimentValueError(QneAdkException):
         super().__init__(f"{message}")
 
 
+class ExperimentFailedValidation(QneAdkException):
+    """Raised when an experiment fails validation"""
+
+    def __init__(self, validation_messages: str) -> None:
+        super().__init__(f"Experiment failed validation. Please resolve the following issues:\n"
+                         f"{validation_messages}")
+
+
+class ExperimentExecutionError(QneAdkException):
+    """Raised when an experiment encountered an error while running"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"Experiment encountered an error while running:\n{message}")
+
+
 class InvalidPath(QneAdkException):
     """Raised when an invalid path was found in the appsource tarball"""
 
@@ -186,13 +209,6 @@ class NoNetworkAvailable(QneAdkException):
 
     def __init__(self) -> None:
         super().__init__("No network available which contains enough nodes for all the roles")
-
-
-class NotEnoughRoles(QneAdkException):
-    """Raised when only one role is given"""
-
-    def __init__(self) -> None:
-        super().__init__("The number of roles must be higher than one")
 
 
 class NotLoggedIn(QneAdkException):
