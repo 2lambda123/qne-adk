@@ -82,7 +82,7 @@ setup(
     packages=find_packages(where="src", exclude=["*tests*"]),
     install_requires=["typer[all]", "netqasm==0.14.0", "pydantic>=2.1.1", "pydantic-settings",
                       "tabulate", "jsonschema>=4.19.0", "referencing", "pyyaml", "typing-extensions",
-                      "apistar", "typesystem==0.2.4", "pyjwt"],
+                      "apistar", "typesystem==0.4.1", "pyjwt"],
     extras_require={
         "dev": ["pylint", "coverage>=4.5.1", "mypy", "pytest", "black", "isort", "types-tabulate", "types-PyYAML",
                 "types-requests"],
